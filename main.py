@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, Header, HTTPException, Request
+from fastapi import FastAPI, Depends, Header, HTTPException, Request, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -103,10 +103,10 @@ app = FastAPI(title='RAVOUT SHMOT', lifespan=lifespan, docs_url=None, redoc_url=
 
 @app.middleware('http')
 async def security_headers(request, call_next):
-    if request.method == 'POST' and request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > 17 * 1024 * 1024:
+    if request.method in {'POST', 'PUT'} and request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > 17 * 1024 * 1024:
         from fastapi.responses import JSONResponse
         return JSONResponse({'detail':'Максимум 3 фотографии по 5 МБ'}, status_code=413)
-    if request.url.path == '/api/requests' and request.method == 'POST':
+    if (request.url.path == '/api/requests' or request.url.path.startswith('/api/admin/')) and request.method in {'POST','PUT'}:
         chunks = []
         total = 0
         async for chunk in request.stream():
@@ -119,7 +119,7 @@ async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org; base-uri 'self'; form-action 'self'"
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; font-src 'self'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org; base-uri 'self'; form-action 'self'"
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control'] = 'no-store'
     return response
@@ -132,27 +132,165 @@ def health():
 
 @app.get('/api/me')
 def me(user=Depends(current_user)):
-    return {**user, 'dev':DEV, 'manager_enabled':bool(TOKEN and MANAGER_ID)}
+    return {**user, 'dev':DEV, 'is_admin':user['id'] in ADMIN_IDS, 'manager_enabled':bool(TOKEN and MANAGER_ID)}
+
+CATEGORIES = ['Одежда', 'Обувь', 'Сумки', 'Аксессуары']
+
+def product_json(row):
+    p = dict(row)
+    p['sizes'] = json.loads(p.get('sizes') or '[]')
+    p['colors'] = json.loads(p.get('colors') or '[]')
+    return p
+
+@app.get('/api/catalog-filters')
+def catalog_filters(user=Depends(current_user)):
+    with db() as c:
+        rows = c.execute('SELECT category,brand,sizes,colors FROM products WHERE active=1').fetchall()
+    return {'categories': CATEGORIES,
+            'brands': sorted({r['brand'] for r in rows if r['brand']}, key=str.casefold),
+            'sizes': sorted({v for r in rows for v in json.loads(r['sizes'])}, key=str.casefold),
+            'colors': sorted({v for r in rows for v in json.loads(r['colors'])}, key=str.casefold)}
 
 @app.get('/api/products')
-def products(q: str='', category: str='', favorites: bool=False, user=Depends(current_user)):
-    if len(q)>100 or len(category)>40:
+def products(q: str='', category: str='', favorites: bool=False,
+             brand: str='', size: str='', color: str='',
+             min_price: int=Query(default=0,ge=0,le=100000000),
+             max_price: int=Query(default=100000000,ge=0,le=100000000),
+             sort: str='newest', limit: int=Query(default=40,ge=1,le=200),
+             offset: int=Query(default=0,ge=0,le=100000), user=Depends(current_user)):
+    if len(q)>100 or len(category)>40 or any(len(v)>80 for v in [brand,size,color]):
         raise HTTPException(422, 'Слишком длинный поисковый запрос')
-    sql = '''SELECT p.*, EXISTS(SELECT 1 FROM favorites f WHERE f.product_id=p.id AND f.user_id=?) AS favorite
-             FROM products p WHERE active=1'''
-    args = [user['id']]
+    orders = {'newest':'p.id DESC', 'price_asc':'p.price ASC,p.id DESC',
+              'price_desc':'p.price DESC,p.id DESC', 'title':'CASEFOLD(p.title) ASC,p.id DESC'}
+    if sort not in orders or min_price>max_price:
+        raise HTTPException(422, 'Проверьте порядок сортировки и диапазон цены')
+    sql = """SELECT p.*, EXISTS(SELECT 1 FROM favorites f WHERE f.product_id=p.id AND f.user_id=?) AS favorite
+             FROM products p WHERE active=1 AND p.price>=? AND p.price<=?"""
+    args = [user['id'],min_price,max_price]
     if q:
-        sql += ' AND (CASEFOLD(p.title) LIKE ? OR CASEFOLD(p.description) LIKE ?)'
-        args += ['%'+q.casefold()+'%']*2
+        sql += ' AND (CASEFOLD(p.title) LIKE ? OR CASEFOLD(p.description) LIKE ? OR CASEFOLD(p.brand) LIKE ?)'
+        args += ['%'+q.casefold()+'%']*3
     if category:
-        sql += ' AND p.category=?'
-        args.append(category)
+        sql += ' AND p.category=?'; args.append(category)
+    if brand:
+        sql += ' AND CASEFOLD(p.brand)=?'; args.append(brand.casefold())
+    for field,value in [('sizes',size),('colors',color)]:
+        if value:
+            sql += f' AND EXISTS(SELECT 1 FROM json_each(p.{field}) WHERE CASEFOLD(value)=?)'
+            args.append(value.casefold())
     if favorites:
         sql += ' AND EXISTS(SELECT 1 FROM favorites f WHERE f.product_id=p.id AND f.user_id=?)'
         args.append(user['id'])
     with db() as c:
-        rows=c.execute(sql+' ORDER BY p.id DESC LIMIT 200', args).fetchall()
-    return [dict(r) for r in rows]
+        rows=c.execute(sql+' ORDER BY '+orders[sort]+' LIMIT ? OFFSET ?', args+[limit,offset]).fetchall()
+    return [product_json(r) for r in rows]
+
+async def require_admin(user=Depends(current_user)):
+    if user['id'] not in ADMIN_IDS:
+        raise HTTPException(403,'Доступ только для администратора магазина')
+    return user
+
+@app.get('/api/admin/products')
+def admin_products(q: str='', visibility: str='all',
+                   offset: int=Query(default=0,ge=0,le=100000), user=Depends(require_admin)):
+    if len(q)>100 or visibility not in {'all','active','hidden'}:
+        raise HTTPException(422,'Некорректный фильтр')
+    where='WHERE 1=1';args=[]
+    if q:
+        where+=' AND (CASEFOLD(title) LIKE ? OR CASEFOLD(brand) LIKE ?)'
+        args+=['%'+q.casefold()+'%']*2
+    if visibility!='all':
+        where+=' AND active=?';args.append(int(visibility=='active'))
+    with db() as c:
+        total=c.execute('SELECT COUNT(*) FROM products '+where,args).fetchone()[0]
+        rows=c.execute('SELECT * FROM products '+where+' ORDER BY id DESC LIMIT 50 OFFSET ?',args+[offset]).fetchall()
+    return {'items':[product_json(r) for r in rows], 'total':total}
+
+async def save_admin_product(request, product_id=None):
+    with db() as c:
+        old=c.execute('SELECT * FROM products WHERE id=?',(product_id,)).fetchone() if product_id else None
+    if product_id and not old:
+        raise HTTPException(404,'Товар не найден')
+    async with request.form(max_files=1,max_fields=12,max_part_size=16*1024*1024) as form:
+        def text(name,limit,required=False):
+            value=form.get(name,'')
+            if not isinstance(value,str): raise HTTPException(422,f'Некорректное поле {name}')
+            value=value.strip()
+            if len(value)>limit or (required and not value):
+                raise HTTPException(422,f'Заполните {name}, максимум {limit} символов')
+            return value
+        title=text('title',120,True); description=text('description',1200)
+        category=text('category',40,True); brand=text('brand',80)
+        try:
+            price=int(str(form.get('price',''))); active=int(str(form.get('active','1')))
+            if not 0<=price<=100000000 or active not in {0,1}: raise ValueError()
+        except (ValueError,TypeError):
+            raise HTTPException(422,'Цена — целое число от 0 до 100 000 000; публикация — 0 или 1')
+        if category not in CATEGORIES:
+            raise HTTPException(422,'Выберите категорию из списка')
+        def options(name):
+            values=list(dict.fromkeys(s.strip() for s in text(name,500).split(',') if s.strip()))
+            if len(values)>25 or any(len(v)>40 for v in values):
+                raise HTTPException(422,'Не более 25 значений по 40 символов, разделённых запятой')
+            return json.dumps(values,ensure_ascii=False)
+        sizes=options('sizes'); colors=options('colors')
+        upload=form.get('image'); image=old['image'] if old else None; path=None
+        if upload and hasattr(upload,'read') and upload.filename:
+            raw=await upload.read(15*1024*1024+1)
+            if len(raw)>15*1024*1024: raise HTTPException(413,'Фото должно быть не больше 15 МБ')
+            try:
+                with Image.open(io.BytesIO(raw)) as source:
+                    if source.format not in {'JPEG','PNG','WEBP'} or source.width*source.height>36000000:
+                        raise ValueError()
+                    if min(source.size)<600:
+                        raise HTTPException(422,'Выберите оригинал фото: минимум 600×600 пикселей')
+                    im=ImageOps.exif_transpose(source)
+                    if im.mode in {'RGBA','LA'} or 'transparency' in im.info:
+                        rgba=im.convert('RGBA'); background=Image.new('RGBA',rgba.size,'white');background.alpha_composite(rgba);im=background.convert('RGB')
+                    else: im=im.convert('RGB')
+                    im.thumbnail((2560,2560))
+                    output=io.BytesIO(); im.save(output,format='WEBP',quality=94,method=4)
+                    name=uuid.uuid4().hex+'.webp';path=DATA/'products'/name
+                    image='/product-images/'+name
+            except (UnidentifiedImageError,OSError,ValueError,Image.DecompressionBombError):
+                raise HTTPException(422,'Нужен JPG, PNG или WebP до 36 мегапикселей')
+        if not image:
+            raise HTTPException(422,'Добавьте качественную фотографию товара')
+        try:
+            if path: path.write_bytes(output.getvalue())
+            with db() as c:
+                args=(title,price,category,image,description,active,brand,sizes,colors)
+                if product_id:
+                    cur=c.execute('UPDATE products SET title=?,price=?,category=?,image=?,description=?,active=?,brand=?,sizes=?,colors=? WHERE id=?',args+(product_id,))
+                    if not cur.rowcount: raise HTTPException(404,'Товар не найден')
+                else:
+                    product_id=c.execute('INSERT INTO products(title,price,category,image,description,active,brand,sizes,colors) VALUES (?,?,?,?,?,?,?,?,?)',args).lastrowid
+                row=c.execute('SELECT * FROM products WHERE id=?',(product_id,)).fetchone()
+        except Exception:
+            if path: path.unlink(missing_ok=True)
+            raise
+        # Старые изображения не удаляются автоматически: клиент мог открыть карточку
+        # до замены. Очистку неиспользуемых файлов выполняет владелец с резервной копией.
+        return product_json(row)
+
+@app.post('/api/admin/products',status_code=201)
+async def admin_create(request:Request,user=Depends(require_admin)):
+    return await save_admin_product(request)
+
+@app.put('/api/admin/products/{product_id}')
+async def admin_update(product_id:int,request:Request,user=Depends(require_admin)):
+    return await save_admin_product(request,product_id)
+
+@app.put('/api/admin/products/{product_id}/visibility')
+async def admin_visibility(product_id:int,request:Request,user=Depends(require_admin)):
+    try: data=await request.json()
+    except ValueError: raise HTTPException(422,'Некорректный JSON')
+    if not isinstance(data,dict) or type(data.get('active')) is not bool:
+        raise HTTPException(422,'Передайте active: true или false')
+    with db() as c:
+        cur=c.execute('UPDATE products SET active=? WHERE id=?',(int(data['active']),product_id))
+        if not cur.rowcount: raise HTTPException(404,'Товар не найден')
+    return {'active':data['active']}
 
 @app.put('/api/favorites/{product_id}')
 async def favorite(product_id:int, request:Request, user=Depends(current_user)):

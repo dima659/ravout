@@ -14,8 +14,16 @@ DATA.mkdir(parents=True, exist_ok=True)
 (DATA / 'private').mkdir(exist_ok=True)
 (DATA / 'products').mkdir(exist_ok=True)
 TOKEN = os.getenv('BOT_TOKEN', '')
-ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()}
-MANAGER_ID = int(os.getenv('MANAGER_CHAT_ID', '0'))
+def env_id(value, name):
+    try:
+        return int(value.strip() or '0')
+    except ValueError:
+        raise RuntimeError(f'{name}: укажите числовой Telegram ID, не имя и не @username.') from None
+
+ADMIN_IDS = {env_id(x, 'ADMIN_IDS') for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()}
+if any(x <= 0 for x in ADMIN_IDS):
+    raise RuntimeError('ADMIN_IDS: ID администратора должен быть положительным числом.')
+MANAGER_ID = env_id(os.getenv('MANAGER_CHAT_ID', '0'), 'MANAGER_CHAT_ID')
 DEV = os.getenv('DEV_MODE', 'false').lower() == 'true'
 WEBAPP_URL = os.getenv('WEBAPP_URL', '')
 
@@ -52,6 +60,13 @@ def init_db():
           request_id INTEGER PRIMARY KEY REFERENCES requests(id), attempts INTEGER NOT NULL DEFAULT 0,
           next_attempt INTEGER NOT NULL DEFAULT 0, delivered INTEGER NOT NULL DEFAULT 0, last_error TEXT);
         ''')
+        # Миграция существующего каталога без удаления товаров и заявок.
+        columns = {r['name'] for r in c.execute('PRAGMA table_info(products)')}
+        for name, definition in [('brand', "TEXT NOT NULL DEFAULT ''"),
+                                 ('sizes', "TEXT NOT NULL DEFAULT '[]'"),
+                                 ('colors', "TEXT NOT NULL DEFAULT '[]'")]:
+            if name not in columns:
+                c.execute(f'ALTER TABLE products ADD COLUMN {name} {definition}')
 
 def validate_init_data(raw, token=TOKEN, now=None):
     pairs = parse_qsl(raw, keep_blank_values=True)
