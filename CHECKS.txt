@@ -1,0 +1,4 @@
+22 API/auth/photo/manager-logic tests: PASS
+Combined web + bot lifecycle test with mocked Telegram: PASS
+Actual Render deploy and live Telegram delivery require owner credentials and were not performed.
+All archive entries are flat; Docker reconstructs application directories.

@@ -124,12 +124,12 @@ async def status_command(m:Message,bot:Bot):
     except (ValueError,IndexError):
         await m.answer('Неверный формат. См. /admin')
 
-async def main():
+async def main(handle_signals=True):
     if not TOKEN or not WEBAPP_URL.startswith('https://') or not ADMIN_IDS or not MANAGER_ID:
         raise RuntimeError('Нужны BOT_TOKEN, ADMIN_IDS, MANAGER_CHAT_ID и WEBAPP_URL=https://...')
     async with Bot(TOKEN) as bot:
         await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text='Магазин',web_app=WebAppInfo(url=WEBAPP_URL)))
-        await router.start_polling(bot,allowed_updates=router.resolve_used_update_types())
+        await router.start_polling(bot,allowed_updates=router.resolve_used_update_types(),handle_signals=handle_signals)
 
 if __name__=='__main__':
     asyncio.run(main())

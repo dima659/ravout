@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -14,7 +15,7 @@ from fastapi import FastAPI, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
-from .core import DATA, ROOT, TOKEN, DEV, MANAGER_ID, ADMIN_IDS, db, validate_init_data
+from .core import DATA, ROOT, TOKEN, DEV, MANAGER_ID, ADMIN_IDS, WEBAPP_URL, db, validate_init_data
 
 log = logging.getLogger('ravout')
 STATUSES = {'new':'Принята', 'working':'В работе', 'done':'Завершена', 'cancelled':'Отменена'}
@@ -68,16 +69,35 @@ async def outbox_loop():
                                   (int(time.time()) + min(3600, 15 * 2**min(job['attempts'], 8)), type(e).__name__, job['request_id']))
             await asyncio.sleep(5)
 
+async def polling_loop():
+    from .bot import main as run_bot
+    while True:
+        try:
+            await run_bot(handle_signals=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error('Telegram polling interrupted (%s); retry in 15s', type(exc).__name__)
+        await asyncio.sleep(15)
+
 @asynccontextmanager
 async def lifespan(app):
     if not DEV and (not TOKEN or not MANAGER_ID or not ADMIN_IDS):
-        raise RuntimeError('Задайте BOT_TOKEN, MANAGER_CHAT_ID и ADMIN_IDS. Для локального просмотра: DEV_MODE=true.')
-    task = asyncio.create_task(outbox_loop()) if TOKEN and MANAGER_ID else None
-    yield
-    if task:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        raise RuntimeError('Set BOT_TOKEN, MANAGER_CHAT_ID and ADMIN_IDS in Render Environment.')
+    run_bot = os.getenv('RUN_BOT', 'true').lower() == 'true' and not DEV
+    if run_bot and (not WEBAPP_URL.startswith('https://') or not urlsplit(WEBAPP_URL).netloc):
+        raise RuntimeError('Set WEBAPP_URL to your public https://...onrender.com address.')
+    tasks = []
+    if TOKEN and MANAGER_ID:
+        tasks.append(asyncio.create_task(outbox_loop()))
+    if run_bot:
+        tasks.append(asyncio.create_task(polling_loop()))
+    try:
+        yield
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 app = FastAPI(title='RAVOUT SHMOT', lifespan=lifespan, docs_url=None, redoc_url=None)
 
@@ -86,6 +106,16 @@ async def security_headers(request, call_next):
     if request.method == 'POST' and request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > 17 * 1024 * 1024:
         from fastapi.responses import JSONResponse
         return JSONResponse({'detail':'Максимум 3 фотографии по 5 МБ'}, status_code=413)
+    if request.url.path == '/api/requests' and request.method == 'POST':
+        chunks = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > 17 * 1024 * 1024:
+                from fastapi.responses import JSONResponse
+                return JSONResponse({'detail':'Максимум 3 фотографии по 5 МБ'}, status_code=413)
+            chunks.append(chunk)
+        request._body = b''.join(chunks)
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
