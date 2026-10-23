@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffdb00"><title>RAVOUT SHMOT</title><link rel="stylesheet" href="/static/style.css"><script src="https://telegram.org/js/telegram-web-app.js"></script><script defer src="/static/app.js"></script></head>
+<body>
+<main id="app">
+<section id="splash" class="splash"><div class="wordmark big">RAVOUT<br>SHMOT</div><img src="/static/assets/brand.png" alt="Ravout Shmot — фирменный персонаж" class="splash-art"><div class="loading"><span></span></div><p>Загружаем каталог…</p></section>
+<header id="header" hidden><button class="wordmark brand" id="brand-home" aria-label="На главную">RAVOUT SHMOT</button><span class="country">★ Китай</span></header>
+<div id="demo" class="notice" hidden>Демо · заявки сохраняются локально, менеджеру не отправляются</div>
+<div id="fatal" class="empty" hidden><h1>Откройте в Telegram</h1><p id="fatal-message"></p><button class="primary" id="reload">Повторить</button></div>
+<section id="catalog" class="screen" hidden>
+<label class="search"><span class="sr-only">Поиск по товарам</span><input id="search" placeholder="Поиск по товарам" maxlength="100" type="search"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"></circle><path d="m15 15 6 6"></path></svg></label>
+<div class="hero"><div><span class="eyebrow">RAVOUT SELECTION</span><h1>Редкие вещи<br>из Китая</h1><p>Твой стиль. Без границ.</p></div><img src="/static/assets/brand.png" alt=""></div>
+<div id="categories" class="categories" aria-label="Категории"><button class="chip selected" data-category="">Все</button><button class="chip" data-category="Одежда">Одежда</button><button class="chip" data-category="Обувь">Обувь</button><button class="chip" data-category="Сумки">Сумки</button><button class="chip" data-category="Аксессуары">Аксессуары</button></div>
+<button class="find-banner" id="find-banner"><strong>Не нашли вещь?</strong><span>Найдём по фото <b>→</b></span></button>
+<div class="section-title"><h2 id="products-heading">Каталог</h2><span id="product-count"></span></div><div id="products" class="products"></div>
+</section>
+<section id="find" class="screen" hidden>
+<div class="section-title"><h1 class="outlined">НАЙДЁМ ВЕЩЬ<br>ПО ФОТО</h1><span class="step">01 / 02</span></div>
+<p class="lead">Отправьте фото или описание. Менеджер подберёт варианты и ответит в Telegram.</p>
+<form id="request-form">
+<div id="selected-product" class="notice" hidden></div>
+<label class="label">Фото <span>до 3 шт. · JPG, PNG, WebP · до 5 МБ</span></label>
+<div class="photo-row"><div id="photo-previews"></div><label class="add-photo" for="photos"><span>+</span><small>Добавить</small><input id="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple class="sr-only"></label></div>
+<label class="label" for="description">Что ищем?</label><textarea id="description" name="description" rows="3" maxlength="1200" placeholder="Бренд, модель или описание вещи"></textarea>
+<label class="label" for="link">Ссылка на пример <span>необязательно</span></label><input id="link" name="link" type="url" maxlength="500" placeholder="https://…">
+<div class="fields"><label>Размер<input name="size" maxlength="40" placeholder="M / 42"></label><label>Цвет<input name="color" maxlength="40" placeholder="Чёрный"></label><label>Бюджет<input name="budget" maxlength="40" placeholder="до 15 000 ₽"></label><label>Кол-во<input name="quantity" type="number" value="1" min="1" max="100" required></label></div>
+<label class="label" for="username">Ваш Telegram <span>если есть username</span></label><input id="username" name="username" maxlength="33" placeholder="@username" autocomplete="off">
+<p class="hint">Достаточно фото или описания. Для товара из каталога они необязательны.</p>
+<label class="consent"><input id="consent" type="checkbox" required><span>Согласен на обработку данных заявки и передачу фото менеджеру для подбора вещи. <button type="button" id="privacy-open" class="text-button">Подробнее</button></span></label>
+<div id="form-error" class="error" role="alert" hidden></div><button class="primary" id="send" type="submit">Отправить заявку <span>→</span></button>
+<p class="hint">Это запрос на подбор, не оплата и не подтверждённый заказ.</p>
+</form></section>
+<section id="success" class="screen success" hidden><img src="/static/assets/brand.png" alt="Ravout Shmot"><span id="request-number" class="badge"></span><h1 class="outlined">ЗАЯВКА<br>ОТПРАВЛЕНА</h1><p id="success-text">Заявка сохранена. Менеджер свяжется с вами в Telegram после её получения.</p><button class="primary" id="my-requests">Мои заявки <span>→</span></button><button class="secondary" id="back-catalog">Вернуться в каталог</button></section>
+<section id="favorites" class="screen" hidden><h1 class="outlined">ИЗБРАННОЕ</h1><p class="lead">Вещи, которые хочется сохранить.</p><div id="favorite-products" class="products"></div></section>
+<section id="profile" class="screen" hidden><h1 class="outlined">ПРОФИЛЬ</h1><div class="profile-card"><div id="avatar" class="avatar">R</div><div><strong id="profile-name"></strong><p id="profile-username"></p></div></div><div class="section-title"><h2>Мои заявки</h2><button class="text-button" id="refresh-requests">Обновить</button></div><div id="requests"></div><button class="secondary" id="profile-privacy">Обработка данных</button></section>
+<nav id="nav" hidden aria-label="Основная навигация"><button data-tab="catalog" class="active"><span>⌂</span>Главная</button><button data-tab="catalog" data-catalog="true"><span>▦</span>Каталог</button><button data-tab="find"><span>⊕</span>Найти вещь</button><button data-tab="favorites"><span>♡</span>Избранное</button><button data-tab="profile"><span>◉</span>Профиль</button></nav>
+</main>
+<dialog id="product-dialog"><button class="close" aria-label="Закрыть">×</button><img id="detail-image" alt=""><span id="detail-category" class="badge"></span><h2 id="detail-title"></h2><p id="detail-description"></p><strong id="detail-price"></strong><p class="hint">Наличие, доставку и итоговую стоимость подтвердит менеджер.</p><button class="primary" id="order-product">Оставить заявку →</button></dialog>
+<dialog id="privacy-dialog"><button class="close" aria-label="Закрыть">×</button><h2>Данные заявки</h2><p>Сохраняются Telegram ID, имя, указанный username, параметры заявки и фотографии. Они передаются менеджеру магазина только для обработки вашего запроса.</p><p>Фото заявок не публикуются в каталоге. Чтобы запросить удаление данных, напишите менеджеру через бота. Отправляйте только фото вещей, без документов и чувствительной информации.</p><p>До публикации владелец магазина должен указать в инструкции бота свои контакты, реквизиты оператора данных и срок хранения.</p></dialog>
+<div id="toast" role="status" hidden></div>
+</body></html>
