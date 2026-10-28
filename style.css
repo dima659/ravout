@@ -8,3 +8,5 @@ dialog{padding:0;border:0;color:var(--ink);background:white;border-radius:20px;w
 .search input[type=search]{border:0;box-shadow:none;border-radius:0;background:transparent;padding:12px 0;min-height:46px;font-size:14px}.hero-cta{background:var(--red)}.hero-cta:hover{background:var(--red-dark)}.nav-button{font-size:14px}.origin{font-size:14px}.product-meta .product-brand{font-size:14px}.drawer{max-width:none}
 
 @media(max-width:540px){#app{height:var(--tg-viewport-height,100dvh)}}
+
+.sort-quick{display:flex;gap:8px;margin-bottom:14px}.sort-quick .chip{flex:1;justify-content:center}
